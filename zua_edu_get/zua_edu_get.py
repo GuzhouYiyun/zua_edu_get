@@ -111,39 +111,50 @@ def split_args(s):
         out.append(buf.strip())
     return out
 
-pat = re.compile(r"new TaskActivity\((.*?)\);\s*index =(\d+)\*unitCount\+(\d+);", re.S)
+ta_pat = re.compile(r"new TaskActivity\((.*?)\);", re.S)
+idx_pat = re.compile(r"index\s*=\s*(\d+)\s*\*\s*unitCount\s*\+\s*(\d+)\s*;")
 grid = [[None] * 7 for _ in range(10)]  # grid[节次][星期几]
 
-for mm in pat.finditer(resp.text):
-    args = split_args(mm.group(1))
+ta_positions = [m.start() for m in ta_pat.finditer(resp.text)]
+
+for i, ta_pos in enumerate(ta_positions):
+    ta_match = ta_pat.search(resp.text, ta_pos)
+    args = split_args(ta_match.group(1))
     if len(args) < 7:
         continue
     course = args[3].strip('"').split("(")[0] or args[2].strip('"').split("(")[0]
     room = args[5].strip('"') or args[4].strip('"')
     bits = args[6].strip('"')
-    weeks = [str(i + 1) for i, ch in enumerate(bits) if ch == "1"]
-    day = int(mm.group(2))
-    unit = int(mm.group(3))
-    if day >= 7 or unit >= 10:
-        continue
-    seg = resp.text[:mm.start()]
+    weeks = [str(j + 1) for j, ch in enumerate(bits) if ch == "1"]
+
+    next_ta = ta_positions[i + 1] if i + 1 < len(ta_positions) else len(resp.text)
+    index_block = resp.text[ta_match.end():next_ta]
+    units = idx_pat.findall(index_block)
+
+    seg = resp.text[:ta_pos]
     tpos = [t.start() for t in re.finditer(r"var teachers = \[", seg)]
     if tpos:
         names = re.findall(r'name:"([^"]+)"', seg[tpos[-1]:])
         teacher = "、".join(dict.fromkeys(names)) or "未知"
     else:
         teacher = "未知"
+
     ent = (course, room, teacher, ",".join(weeks))
-    if grid[unit][day] is None:
-        grid[unit][day] = [ent]
-    else:
-        for i, e in enumerate(grid[unit][day]):
-            if e[0] == course and e[1] == room and e[2] == teacher:
-                merged = sorted(set(e[3].split(",")) | set(weeks), key=int)
-                grid[unit][day][i] = (e[0], e[1], e[2], ",".join(merged))
-                break
-        else:
-            grid[unit][day].append(ent)
+    if units:
+        day = int(units[0][0])
+        unit_vals = sorted(set(int(u) for _, u in units))
+        for u in unit_vals:
+            if u < 10 and day < 7:
+                if grid[u][day] is None:
+                    grid[u][day] = [ent]
+                else:
+                    for j, e in enumerate(grid[u][day]):
+                        if e[0] == course and e[1] == room and e[2] == teacher:
+                            merged = sorted(set(e[3].split(",")) | set(weeks), key=int)
+                            grid[u][day][j] = (e[0], e[1], e[2], ",".join(merged))
+                            break
+                    else:
+                        grid[u][day].append(ent)
 
 wb = openpyxl.Workbook()
 ws = wb.active
@@ -155,29 +166,16 @@ ws.cell(1, 1, "节次/周次")
 for d, txt in enumerate(days):
     ws.cell(1, 2 + d, txt)
 
-def same_block(a, b):
-    if not a or not b or len(a) != len(b):
-        return False
-    return all(x[0] == y[0] and x[1] == y[1] and x[2] == y[2] for x, y in zip(a, b))
-
 for d in range(7):
-    u = 0
-    while u < 10:
+    for u in range(10):
         if grid[u][d] is None:
-            u += 1
             continue
-        span = 1
-        while u + span < 10 and same_block(grid[u][d], grid[u + span][d]):
-            span += 1
         lines = []
         for course, room, teacher, w in grid[u][d]:
             lines += [course, room, teacher, w]
         val = "\n".join(lines)
         r, c = 2 + u, 2 + d
-        if span > 1:
-            ws.merge_cells(start_row=r, start_column=c, end_row=r + span - 1, end_column=c)
         ws.cell(r, c, val).alignment = al
-        u += span
 
 for u in range(10):
     ws.cell(2 + u, 1, "第" + str(u + 1) + "节").alignment = al
@@ -186,5 +184,25 @@ for i, wd in enumerate([10] + [17] * 7, start=1):
 
 out = os.path.join(os.path.expanduser("~"), "Desktop", "课表.xlsx")
 wb.save(out)
-print("已生成课表：", out)
+print("已生成Excel课表：", out)
+
+# 生成TXT课表
+txt_lines = []
+days = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+for d in range(7):
+    for u in range(10):
+        if grid[u][d] is None:
+            continue
+        for course, room, teacher, w in grid[u][d]:
+            txt_lines.append(course)
+            txt_lines.append(f"时间：{days[d]} 第{u + 1}节")
+            txt_lines.append(f"地点：{room}")
+            txt_lines.append(f"教师：{teacher}")
+            txt_lines.append(f"周次：{w}")
+            txt_lines.append("")
+
+txt_out = os.path.join(os.path.expanduser("~"), "Desktop", "课表.txt")
+with open(txt_out, "w", encoding="utf-8") as f:
+    f.write("\n".join(txt_lines))
+print("已生成TXT课表：", txt_out)
 os.system("pause")
