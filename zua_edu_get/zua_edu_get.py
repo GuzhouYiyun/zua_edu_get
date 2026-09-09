@@ -1,5 +1,7 @@
-﻿import requests, re, time
+﻿import requests, re, time, os, sys
 from hashlib import sha1
+
+os.system("chcp 65001 >nul")
 
 url = "http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseTable.action"
 login_url = "http://jwglxt.zua.edu.cn/eams/loginExt.action"
@@ -7,12 +9,11 @@ login_url = "http://jwglxt.zua.edu.cn/eams/loginExt.action"
 # 网页实例
 s = requests.Session()
 
-username = input("学号: ")
-password = input("密码: ")
-
 #----------登录页面
 page = s.get(login_url).text
-time.sleep(2)
+
+username = input("学号: ")
+password = input("密码: ")
 
 #密钥
 m = re.search(r"SHA1\('([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-)'", page)
@@ -38,12 +39,15 @@ data = {
     }
 
 s.post(login_url, headers=headers, data=data)
-time.sleep(2)
 
-#----------获取课表
-#模拟点击访问
+# 检查登录是否成功
 r = s.get("http://jwglxt.zua.edu.cn/eams/courseTableForStd.action")
-time.sleep(1)
+if "semesterBar" not in r.text:
+    print("登录失败！请检查学号和密码。")
+    os.system("pause")
+    sys.exit()
+else:
+    print("登录成功！请稍等...")
 
 #查询时间id
 tag_id = "semesterBar" + re.search(r'semesterBar(\d+)Semester', r.text).group(1) + "Semester"
@@ -84,7 +88,7 @@ resp = s.post(url = url, headers = headers, data = data)
 #print(resp.text)
 
 # ---------- 解析课表并生成 Excel（追加部分） ----------
-import openpyxl, os
+import openpyxl
 
 def split_args(s):
     out, buf, depth, q = [], "", 0, None
